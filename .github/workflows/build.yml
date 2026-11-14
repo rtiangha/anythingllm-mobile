@@ -59,6 +59,22 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      - name: Set up the Hexagon SDK
+        uses: ./.github/actions/setup-hexagon-sdk
+
+      # llama.rn builds with CMake 3.22.1; make sure that exact package (and its
+      # ninja) is installed and runnable before Gradle tries to use it.
+      - name: Ensure Android CMake 3.22.1 + ninja
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager | head -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "cmake;3.22.1"
+          ls -l "$SDK/cmake/"
+          file "$SDK/cmake/3.22.1/bin/ninja"
+          "$SDK/cmake/3.22.1/bin/ninja" --version
+          "$SDK/cmake/3.22.1/bin/cmake" --version
+
       - name: Build Android Release
         working-directory: android
         run: |
