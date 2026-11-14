@@ -51,25 +51,8 @@ android {
         }
     }
 
-    def keystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
-
-    if (keystoreFile != null) {
-        signingConfigs {
-            release {
-                storeFile file(keystoreFile)
-                storePassword System.getenv("ANDROID_KEYSTORE_PASS")
-                keyAlias System.getenv("ANDROID_KEY_ALIAS")
-                keyPassword System.getenv("ANDROID_KEYSTORE_PASS")
-            }
-        }
-    }
-
     buildTypes {
         release {
-            if (keystoreFile != null) {
-                signingConfig signingConfigs.release
-            }
-
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
             // Ship native debug symbols in the AAB so Play Console can symbolicate native (llama.rn) crashes

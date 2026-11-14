@@ -65,18 +65,23 @@ jobs:
       - name: Build Android Release
         working-directory: android
         run: |
-          if [ ! -z "${ANDROID_KEYSTORE_B64}" ]; then
-            export ANDROID_KEYSTORE_FILE="${GITHUB_WORKSPACE}/ks.jks"
-            base64 --decode <<< "${ANDROID_KEYSTORE_B64}" > "${ANDROID_KEYSTORE_FILE}"
-          fi
           yarn build:android:release
+
+      - name: Sign app APK
+        uses: kevin-david/zipalign-sign-android-release@v2
+        id: sign_app
+        with:
+          releaseDirectory: android/app/build/outputs/apks/release
+          signingKeyBase64: ${{ secrets.DROID_KEYSTORE_B64 }}
+          alias: ${{ secrets.DROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.DROID_KEYSTORE_PASS }}
+          keyPassword: ${{ secrets.DROID_KEY_PASS }}
+          zipAlign: true
         env:
-          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          BUILD_TOOLS_VERSION: "36.0.0"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v7
         with:
           name: android-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apks/release/anythingllm-universal-signed.apk

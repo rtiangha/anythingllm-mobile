@@ -92,23 +92,9 @@ try {
     );
     console.log(`🗺️  Sourcemap saved to: ${sourcemapFolder}`);
 
-    // Create universal APK with version in filename
-    console.log('Creating universal APK with version...');
+    console.log('Creating universal APK');
     const aabPath = 'android/app/build/outputs/bundle/release/app-release.aab';
-    const apksOutputPath = `android/app/build/outputs/apks/app-release-v${version}-universal.apks`;
-
-    console.log('Validating keystore files exist...');
-    const keystorePath = 'android/app/anythingllm-upload-key.keystore';
-    const keystorePassword = process.env.APP_RELEASE_STORE_PASSWORD;
-    const keystoreAlias = 'anythingllm-keystore';
-    if (!keystorePassword) {
-        console.error('APP_RELEASE_STORE_PASSWORD environment variable is not set.');
-        process.exit(1);
-    }
-    if (!fs.existsSync(keystorePath)) {
-        console.error('Keystore file not found. Please ensure the keystore file exists at android/app/anythingllm-upload-key.keystore');
-        process.exit(1);
-    }
+    const apksOutputPath = `android/app/build/outputs/apks/app-release-universal.apks`;
 
     // Get Java command
     const javaCommand = getJavaCommand();
@@ -118,26 +104,23 @@ try {
         `--bundle="${aabPath}"`,
         `--output="${apksOutputPath}"`,
         '--mode=universal',
-        `--ks="${keystorePath}"`,
-        `--ks-key-alias="${keystoreAlias}"`,
-        `--ks-pass="pass:${keystorePassword}"`
     ].join(' ');
 
     runCommand(bundletoolCommand);
 
-    // Extract the universal APK with versioned name
-    const outputDir = `android/app/build/outputs/apks/universal-v${version}`;
+    // Extract the universal APK
+    const outputDir = `android/app/build/outputs/apks`;
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
     // Copy and extract
-    const zipPath = `android/app/build/outputs/apks/app-release-v${version}-universal.zip`;
+    const zipPath = `android/app/build/outputs/apks/app-release-universal.zip`;
     fs.copyFileSync(apksOutputPath, zipPath);
 
     // Extract the APK using cross-platform method
     console.log('Extracting universal APK...');
     extractArchive(zipPath, outputDir);
 
-    // Rename the APK to app-release-v${version}-universal.apk
+    // Rename the APK to app-release-universal.apk
     const apkPath = path.join(outputDir, `universal.apk`);
     fs.renameSync(apkPath, path.join(outputDir, `anythingllm-universal.apk`));
 
@@ -149,9 +132,9 @@ try {
     // - AAB in root for Google Play
     // - APK + version.txt in cdn/** for the CDN
     // Create release folder
-    const releaseFolder = `release/v${version}`;
+    const releaseFolder = `release`;
     if (!fs.existsSync(releaseFolder)) fs.mkdirSync(releaseFolder, { recursive: true });
-    fs.copyFileSync(aabPath, path.join(releaseFolder, `anythingllm-v${version}.aab`));
+    fs.copyFileSync(aabPath, path.join(releaseFolder, `anythingllm.aab`));
 
     // Copy APK to cdn/**
     const cdnFolder = path.join(releaseFolder, `cdn`);
@@ -161,7 +144,7 @@ try {
 
     console.log(`✅ Android release build completed successfully!`);
     console.log(`📱 Universal APK extracted to: ${releaseFolder}`);
-    console.log(`📦 AAB bundle: ${path.join(releaseFolder, `anythingllm-v${version}.aab`)}`);
+    console.log(`📦 AAB bundle: ${path.join(releaseFolder, `anythingllm.aab`)}`);
     console.log(`🎯 Final APK: ${path.join(cdnFolder, `anythingllm-universal.apk`)}`);
 } catch (error) {
     console.error('❌ Build failed:', error);
