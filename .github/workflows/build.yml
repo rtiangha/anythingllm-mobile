@@ -59,6 +59,9 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      - name: Set up the Hexagon SDK
+        uses: ./.github/actions/setup-hexagon-sdk
+
       - name: Build Android Release
         working-directory: android
         run: |
