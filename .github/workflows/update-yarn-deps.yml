@@ -1,0 +1,215 @@
+name: Update Yarn dependencies
+
+# Manual, on-demand dependency update for Yarn 1.x (Classic) or Yarn 2+ (Berry).
+# Nothing is committed or pushed: results are uploaded as an artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch, tag or SHA to check out (blank = the ref this run was started from)"
+        required: false
+        default: ""
+      working_directory:
+        description: "Project directory (relative to repo root)"
+        default: "."
+        required: true
+      yarn_version:
+        description: "Yarn major version used by the project"
+        type: choice
+        default: "1"
+        options:
+          - "1"
+          - "2+"
+      node_version:
+        description: "Node version (e.g. 20, 22, lts/*)"
+        default: "lts/*"
+        required: true
+      mode:
+        description: "Update mode"
+        type: choice
+        default: minor-patch
+        options:
+          - minor-patch   # stay on current major versions
+          - latest        # every dependency to its latest major
+          - packages      # only the packages listed below, at latest
+      packages:
+        description: "Space-separated packages (mode=packages). pkg or pkg@version"
+        required: false
+        default: ""
+      run_checks:
+        description: "Run lint/test/build scripts before and after"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+    env:
+      CI: "true"
+      YARN_VERSION: ${{ inputs.yarn_version }}
+      MODE: ${{ inputs.mode }}
+      PACKAGES: ${{ inputs.packages }}
+      RUN_CHECKS: ${{ inputs.run_checks }}
+      REPORT: ${{ github.workspace }}/yarn-update-report
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      YARN_ENABLE_TELEMETRY: "0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Set up Yarn and shared helpers
+        run: |
+          mkdir -p "$REPORT"
+          cat > "$RUNNER_TEMP/helpers.sh" <<'HELP'
+          BERRY=false
+          if [ "$YARN_VERSION" = "2+" ]; then BERRY=true; fi
+          has_script() { node -e "process.exit((require('./package.json').scripts||{})['$1']?0:1)"; }
+          install_frozen() {
+            if $BERRY; then yarn install --immutable; else yarn install --frozen-lockfile; fi
+          }
+          run_checks() {  # $1 = before | after
+            [ "$RUN_CHECKS" = "true" ] || return 0
+            for s in lint test build; do
+              if has_script "$s"; then
+                if yarn run "$s" > "$REPORT/$1-$s.log" 2>&1; then r=pass; else r=FAIL; fi
+              else r=skipped; fi
+              echo "$1 $s: $r" >> "$REPORT/checks.txt"
+            done
+          }
+          report_outdated() {  # $1 = before | after
+            if $BERRY; then
+              npx --yes npm-check-updates@17.1.14 --deep --packageManager yarn > "$REPORT/outdated-$1.txt" 2>&1 || true
+            else
+              yarn outdated > "$REPORT/outdated-$1.txt" 2>&1 || true
+            fi
+          }
+          run_audit() {
+            if $BERRY; then yarn npm audit --all --recursive; else yarn audit; fi
+          }
+          HELP
+          source "$RUNNER_TEMP/helpers.sh"
+
+          if $BERRY; then
+            corepack enable
+            pinned=false
+            if node -e "process.exit(/^yarn@([2-9]|[1-9][0-9])/.test(require('./package.json').packageManager||'')?0:1)"; then pinned=true; fi
+            if [ -f .yarnrc.yml ] && grep -q '^yarnPath:' .yarnrc.yml; then pinned=true; fi
+            if [ "$pinned" = false ]; then
+              echo "::notice::No Yarn 2+ version pinned in the project; running 'yarn set version stable'"
+              yarn set version stable
+            fi
+          fi
+
+          v="$(yarn --version)"
+          echo "Yarn $v / Node $(node --version)"
+          if $BERRY; then
+            case "$v" in 1.*) echo "::error::Expected Yarn 2+, found $v"; exit 1;; esac
+          else
+            case "$v" in 1.*) ;; *) echo "::error::Expected Yarn 1.x, found $v. Choose yarn_version 2+."; exit 1;; esac
+          fi
+
+          {
+            echo "branch/ref input: ${{ inputs.branch || '(triggering ref)' }}"
+            echo "commit: $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+            echo "yarn: $v"
+            echo "node: $(node --version)"
+            echo "mode: $MODE"
+          } > "$REPORT/info.txt"
+
+      - name: Baseline install and checks
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          install_frozen
+          : > "$REPORT/checks.txt"
+          run_checks before
+          report_outdated before
+
+      - name: Update dependencies
+        env:
+          YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          if [ "$MODE" = "packages" ] && [ -z "$PACKAGES" ]; then
+            echo "::error::mode=packages needs a package list"; exit 1
+          fi
+          if $BERRY; then
+            case "$MODE" in
+              minor-patch)
+                npx --yes npm-check-updates@17.1.14 -u --target minor --deep --packageManager yarn
+                yarn install ;;
+              latest) yarn up '*' ;;
+              packages) for p in $PACKAGES; do yarn up "$p"; done ;;
+              *) echo "::error::Unknown mode $MODE"; exit 1 ;;
+            esac
+          else
+            case "$MODE" in
+              minor-patch) yarn upgrade ;;
+              latest) yarn upgrade --latest ;;
+              packages)
+                for p in $PACKAGES; do
+                  rest="${p#@}"
+                  if [[ "$rest" == *@* ]]; then spec="$p"; else spec="$p@latest"; fi
+                  yarn upgrade "$spec"
+                done ;;
+              *) echo "::error::Unknown mode $MODE"; exit 1 ;;
+            esac
+          fi
+          install_frozen
+
+      - name: Post-update checks and reports
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          run_checks after
+          report_outdated after
+          run_audit > "$REPORT/audit.txt" 2>&1 || true
+          git -C "$GITHUB_WORKSPACE" diff -- '*package.json' '*yarn.lock' '*.yarnrc.yml' > "$REPORT/changes.patch" || true
+
+      - name: Collect project files
+        if: always()
+        run: |
+          mkdir -p "$REPORT/files"
+          find . \( -name node_modules -o -name .git \) -prune -o -type f \
+            \( -name package.json -o -name yarn.lock -o -name .yarnrc -o -name .yarnrc.yml \
+               -o -name .nvmrc -o -name .node-version \) \
+            -print0 | xargs -0 -r cp --parents -t "$REPORT/files"
+          {
+            echo "## Yarn update (yarn $YARN_VERSION, $MODE)"
+            echo '```'
+            cat "$REPORT/info.txt" 2>/dev/null || true
+            cat "$REPORT/checks.txt" 2>/dev/null || true
+            echo '```'
+            echo "Files changed:"
+            echo '```'
+            git -C "$GITHUB_WORKSPACE" diff --stat -- '*package.json' '*yarn.lock' '*.yarnrc.yml' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: yarn-update-${{ github.run_number }}
+          path: yarn-update-report/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail if post-update checks failed
+        run: |
+          if grep -q '^after .*FAIL' "$REPORT/checks.txt" 2>/dev/null; then
+            echo "::error::Checks failed after update; see the artifact logs"
+            exit 1
+          fi
